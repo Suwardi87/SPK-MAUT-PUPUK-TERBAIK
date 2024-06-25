@@ -1,0 +1,158 @@
+<?php
+
+namespace App\Http\Controllers;
+
+use App\Models\SupplierKriteria;
+use Log;
+use App\Models\Bobot;
+use App\Models\Kriteria;
+use App\Models\Supplier;
+use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
+
+class SupplierController extends Controller
+{
+    public function index()
+    {
+        $dataSupplier = DB::table('supplier_kriteria')
+            ->join('bobots', 'supplier_kriteria.bobot_id', '=', 'bobots.id')
+            ->join('kriterias', 'supplier_kriteria.kriteria_id', '=', 'kriterias.id')
+            ->join('suppliers', 'supplier_kriteria.supplier_id', '=', 'suppliers.id')
+            ->select('suppliers.nama_supplier', 'bobots.bobot', 'kriterias.nama_kriteria', 'supplier_kriteria.id')
+            ->get();
+
+        // Menghitung skor utilitas untuk setiap supplier
+        foreach ($dataSupplier as $supplier) {
+            // Hitung skor utilitas untuk supplier ini dan simpan ke dalam $supplier->skor_utilitas
+            $supplier->skor_utilitas = $this->hitungSkorUtilitas($supplier->nama_supplier, $supplier->bobot, $supplier->nama_kriteria);
+        }
+
+        // Mengurutkan dataSupplier berdasarkan skor utilitas secara descending
+        $dataSupplier = $dataSupplier->sortByDesc('skor_utilitas');
+
+        $dataKriteria = Kriteria::all();
+        $dataBobot = Bobot::all();
+
+        return view('spk.step3', compact('dataSupplier', 'dataKriteria', 'dataBobot'));
+    }
+
+    public function hitungSkorUtilitas($namaSupplier, $bobot, $namaKriteria) {
+        // Misalnya, implementasi sederhana adalah mengalikan bobot dengan nilai tertentu
+        // Anda dapat mengganti logika ini sesuai dengan kebutuhan bisnis Anda
+        $nilaiSkorUtilitas = $bobot * 10; // Misalnya, asumsi sederhana untuk ilustrasi
+
+        return $nilaiSkorUtilitas;
+    }
+
+
+
+    public function create()
+    {
+        return view('spk.create');
+    }
+
+    public function store(Request $request)
+    {
+        // Validate the form data
+        $request->validate([
+            'nama_supplier' => 'required|string',
+            'bobots_id' => 'required|array',
+            'bobots_id.*' => 'required|exists:bobots,id',
+        ]);
+
+        // Create a new supplier instance
+        $supplier = new Supplier();
+        $supplier->nama_supplier = $request->input('nama_supplier');
+
+        // Save the supplier
+        $supplier->save();
+
+        $bobots_id = $request->input('bobot_id');
+
+        // Periksa apakah bobots_id tidak null dan merupakan array
+        if (!is_null($bobots_id) && is_array($bobots_id)) {
+            // Lakukan iterasi foreach
+             foreach ($request->input('bobots_id') as $kriteria_id => $bobot_id) {
+        // Hitung skor utilitas
+        $skor_utilitas = $this->hitungSkorUtilitas($supplier->nama_supplier, $bobot_id, $kriteria_id);
+
+        // Attach kriteria dengan skor utilitas ke supplier
+        $supplier->kriterias()->attach($kriteria_id, ['bobot_id' => $bobot_id, 'SkorUtilitas' => $skor_utilitas]);
+    }
+        } else {
+            // Tindakan yang diperlukan jika bobots_id null atau bukan array
+            // Contoh: Menampilkan pesan kesalahan atau melakukan tindakan lainnya
+            // Misalnya:
+            echo "Data bobots_id tidak valid.";
+        }
+
+
+
+        // Hitung dan simpan skor utilitas untuk supplier ini
+        $this->hitungDanSimpanSkorUtilitas($supplier);
+
+        // Redirect to a success page or return a success message
+        return redirect()->route('supplier.index')->with('success', 'Supplier added successfully!');
+    }
+
+    // Fungsi untuk menghitung dan menyimpan skor utilitas untuk supplier tertentu
+private function hitungDanSimpanSkorUtilitas($supplier)
+{
+    // Mendapatkan data kriteria dan bobot untuk supplier ini
+    $kriteria = $supplier->kriterias()->first(); // Ambil kriteria pertama dari supplier
+
+    // Pastikan kriteria ditemukan
+    if ($kriteria) {
+        // Mendapatkan nilai C[0] dari kriteria pertama
+        $C = $kriteria->pivot->bobot; // Asumsi nilai bobot disimpan di kolom 'nilai'
+
+        // Menghitung nilai min dan max untuk C
+        $minC = $kriteria->pivot->bobot->min('SkorUtilitas');
+        $maxC = $kriteria->pivot->bobot->max('SkorUtilitas');
+
+        // Menghitung skor utilitas untuk supplier ini
+        $SkorUtilitas = ($C - $minC) / ($maxC - $minC);
+
+        // Simpan skor utilitas ke dalam model SupplierKriteria
+        $supplier->kriterias()->syncWithoutDetaching([
+            $kriteria->id => ['SkorUtilitas' => $SkorUtilitas]
+        ]);
+    }
+}
+
+
+
+
+
+
+    // public function show(supplier $supplier)
+    // {
+    //     return view('spk.show', compact('supplier'));
+    // }
+
+    // public function edit(supplier $supplier)
+    // {
+    //     return view('spk.edit', compact('supplier'));
+    // }
+
+    public function update(Request $request, supplier $supplier)
+    {
+        $request->validate([
+            'nama_supplier' => 'required',
+        ]);
+
+        $supplier->update($request->all());
+
+        return redirect()->route('supplier.index')
+            ->with('success', 'supplier updated successfully');
+    }
+
+    public function destroy(supplier $id)
+    {
+        $id->delete();
+
+        return redirect()->route('spk.bobot')
+            ->with('success', 'supplier deleted successfully');
+    }
+
+}
